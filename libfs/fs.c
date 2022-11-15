@@ -12,9 +12,17 @@
 #include "fs.h"
 
 #define VALID_SIG	"ECS150FS"
+#define SIGLEN          8
 #define RDIR_ENTRIES 	128
 #define BLOCK_SIZE	4096
 #define FAT_START	1
+#define SPBLK_IDX       0
+
+#ifndef RETVALS
+#define RETVALS
+#define RET_SUCCESS 0
+#define RET_FAILURE -1
+#endif
 
 typedef struct super_blk*	sb_t;
 typedef uint16_t*		fat_t;
@@ -22,7 +30,7 @@ typedef struct dir*	 	dir_t;
 
 struct __attribute__((__packed__)) super_blk 
 {
-	char		signature[8];
+	uint8_t		signature[8]; // I'm not sure we want to use char here; maybe uint8_t instead?
 	uint16_t 	total_blocks;
 	uint16_t 	root_dir_idx;
 	uint16_t 	data_block_idx;
@@ -33,9 +41,9 @@ struct __attribute__((__packed__)) super_blk
 
 struct __attribute__((__packed__)) dir 
 {
-	char		file_name[16];
-	uint16_t 	file_size;
-	uint8_t		data_block_idx;
+	uint8_t		file_name[16]; //as above
+	uint32_t 	file_size; //this took hours to find
+	uint16_t	data_block_idx; //this too
 	uint8_t		padding[10];
 };
 
@@ -48,37 +56,59 @@ int open_files = 0;
 
 int fs_mount(const char *diskname)
 {
-	if (diskname == NULL )
-		return -1;
+	/* check whether diskname is valid fs */
+	if (diskname == NULL ) {
+		fprintf(stderr, "[mnt] null diskname\n");
+		return RET_FAILURE;
+	}
+	if (block_disk_open(diskname)) {
+		fprintf(stderr, "[mnt] invalid diskname\n");
+		return RET_FAILURE;
+	} // all following failure catches should close the disk
 
-	if (block_disk_open(diskname))
-		return -1;
+	/* load the superblock */
+	super_blk = malloc(sizeof(struct super_blk));
+	root_dir = malloc(sizeof(struct dir) * FS_FILE_MAX_COUNT);
+	//root_dir = (struct dir*) malloc(BLOCK_SIZE);
+	if (super_blk == NULL || root_dir == NULL) {
+		fprintf(stderr, "[mnt] malloc error\n");
+		return RET_FAILURE;
+	}
 
-	super_blk = (struct super_blk*) malloc(sizeof(struct super_blk));
-	root_dir = (struct dir*) malloc(sizeof(struct dir) *  FS_FILE_MAX_COUNT);
-	if (super_blk == NULL || root_dir == NULL)
-		return -1;
+	/* validate super block */
+	char buf[9];
+	block_read(SPBLK_IDX, super_blk);
+	memcpy(buf, super_blk->signature, SIGLEN);
+	buf[8] = '\0';
+	if (strcmp(buf, VALID_SIG)) {
+		fprintf(stderr, "[mnt] invalid signature: %s\n", buf);
+		return RET_FAILURE;
+	}
+	if (super_blk->total_blocks != block_disk_count()) {
+		fprintf(stderr, "[mnt] invalid block count\n");
+		return RET_FAILURE;
+	}
 
-	block_read(0, super_blk);
-	if (strcmp(super_blk->signature, VALID_SIG) || super_blk->total_blocks != block_disk_count())
-		return -1;
-	
-	block_read(super_blk->root_dir_idx, root_dir);
-	
-	fat = malloc(sizeof(uint16_t) * super_blk->fat_blocks * BLOCK_SIZE);
+	/* load root dir */
+	block_read(super_blk->root_dir_idx, root_dir); // this bit was corrupting the heap
 
-	uint16_t *data_blk = malloc(sizeof(uint16_t) * BLOCK_SIZE);
-
+	/* load the FAT */
 	int block_idx = 0;
+	fat = malloc(sizeof(uint16_t) * super_blk->fat_blocks * BLOCK_SIZE);
+	//uint16_t *data_blk = malloc(sizeof(uint16_t) * BLOCK_SIZE); //this was twice as large as it should have been
+	uint16_t data_blk[BLOCK_SIZE/2];
+	if (fat == NULL /*|| data_blk == NULL*/) {
+		fprintf(stderr, "[mnt] malloc error\n");
+		return RET_FAILURE;
+	}
 	for (int i = FAT_START; i <= super_blk->fat_blocks; i++) {
 		block_read(i, data_blk);
 		memcpy(fat + block_idx, data_blk, BLOCK_SIZE);
 		block_idx += BLOCK_SIZE;
 	}
 
-	//free(data_blk);
 	mounted = 1;
-	return 0;
+	return RET_SUCCESS;
 }
 
 int fs_umount(void)
@@ -90,16 +120,16 @@ int fs_umount(void)
 	 * cleaned.
 	 */
 
-	if (open_files > 0 || block_disk_count() == -1)
-		return -1;
+	if (open_files > 0 || block_disk_count() == RET_FAILURE)
+		return RET_FAILURE;
 	
 	block_write(super_blk->root_dir_idx, root_dir);
 	block_write(0, super_blk);
 	block_write(1, fat);
 	block_write(2, fat + BLOCK_SIZE);
 
-	if (block_disk_close() == -1)
-		return -1;
+	if (block_disk_close() == RET_FAILURE)
+		return RET_FAILURE;
 
 	free(root_dir);
 	free(fat);
@@ -107,7 +137,7 @@ int fs_umount(void)
 
 	mounted = 0;
 
-	return 0;
+	return RET_SUCCESS;
 }
 
 int get_rdir_free_num(void)
@@ -131,8 +161,8 @@ int get_fat_free_num(void)
 
 int fs_info(void)
 {	
-	if (block_disk_count() == -1)
-		return -1;
+	if (mounted == 0 || block_disk_count() == -1) // we should have a disk before printing info
+		return RET_FAILURE;
 
 	printf("FS Info:\n");
 	printf("total_blk_count=%d\n", super_blk->total_blocks);
@@ -142,6 +172,8 @@ int fs_info(void)
 	printf("data_blk_count=%d\n", super_blk->total_data_blocks);
 	printf("fat_free_ratio=%d/%d\n", super_blk->total_data_blocks - get_fat_free_num(), super_blk->total_data_blocks);
 	printf("rdir_free_ratio=%d/%d\n", get_rdir_free_num(), RDIR_ENTRIES);
+
+	return RET_SUCCESS;
 }
 
 int fs_create(const char *filename)
@@ -192,7 +224,12 @@ int fs_read(int fd, void *buf, size_t count)
 // DEBUG
 int main(int argc, char *argv[])
 {
-	fs_mount("../apps/disk.fs");
-	fs_info();
-	fs_umount();
+	int m, i, u;
+	m = fs_mount("./disk.fs");
+	i = fs_info();
+	//fprintf(stdout, "Retvals: m=%d, i=%d\n", m, i);
+	u = fs_umount();
+	fprintf(stdout, "Retvals: m=%d, i=%d, u=%d\n", m, i, u);
+	
+	return EXIT_SUCCESS;
 }
