@@ -30,7 +30,7 @@ typedef struct dir*	 	dir_t;
 
 struct __attribute__((__packed__)) super_blk 
 {
-	uint8_t		signature[8]; // I'm not sure we want to use char here; maybe uint8_t instead?
+	uint8_t		signature[8];
 	uint16_t 	total_blocks;
 	uint16_t 	root_dir_idx;
 	uint16_t 	data_block_idx;
@@ -41,9 +41,9 @@ struct __attribute__((__packed__)) super_blk
 
 struct __attribute__((__packed__)) dir 
 {
-	uint8_t		file_name[16]; //as above
-	uint32_t 	file_size; //this took hours to find
-	uint16_t	data_block_idx; //this too
+	uint8_t		file_name[16];
+	uint32_t 	file_size;
+	uint16_t	data_block_idx;
 	uint8_t		padding[10];
 };
 
