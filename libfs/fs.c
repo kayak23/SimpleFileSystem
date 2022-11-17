@@ -13,10 +13,10 @@
 
 #define VALID_SIG	"ECS150FS"
 #define SIGLEN          8
-#define RDIR_ENTRIES 	128
 #define BLOCK_SIZE	4096
 #define FAT_START	1
 #define SPBLK_IDX       0
+#define FAT_EOC         0xffff
 
 #ifndef RETVALS
 #define RETVALS
@@ -53,9 +53,61 @@ dir_t root_dir;
 
 int mounted = 0;
 int open_files = 0;
+int free_entries = 0;
+
+int get_rdir_free_num(void)
+{
+        int i;
+        int res = 0;
+        for (i = 0; i < FS_FILE_MAX_COUNT; i++)
+                if (root_dir[i].file_name[0] == '\0')
+                        res++;
+
+        return res;
+}
+
+int get_fat_free_num(void)
+{
+        int i;
+        int res = 0;
+        for (i = 0; i < super_blk->total_data_blocks; i++)
+                if (fat[i] == 0)
+                        res++;
+
+        return res;
+}
+
+void print_fat(void) // DEBUG only func
+{
+        int i;
+        for(i = 0; i < super_blk->fat_blocks*BLOCK_SIZE; i++)
+                if(fat[i] != 0)
+                        fprintf(stdout, "FAT entry %d: %d\n", i, fat[i]);
+}
+
+void print_dir(void) // DEBUG only func
+{
+        int i;
+        char *fn = "Filename";
+        char *fs = "Filesize";
+        char *bi = "Block Index";
+        for(i = 0; i < FS_FILE_MAX_COUNT; i++) {
+                if(root_dir[i].file_name[0] != '\0') {
+                        char *efn = root_dir[i].file_name;
+                        int efs = root_dir[i].file_size;
+                        int idx = root_dir[i].data_block_idx;
+                        fprintf(stdout, "Root entry %d:\n\t%s:%s\n\t%s:%d\n\t%s:%d\n", i, fn, efn, fs, efs, bi, idx);
+                }
+        }
+}
 
 int fs_mount(const char *diskname)
 {
+	/* In the future, let's break this function
+	 * into three sections in which we initialize
+	 * all of our globals individually
+	 * */
+
 	/* check whether diskname is valid fs */
 	if (diskname == NULL ) {
 		fprintf(stderr, "[mnt] null diskname\n");
@@ -69,7 +121,6 @@ int fs_mount(const char *diskname)
 	/* load the superblock */
 	super_blk = malloc(sizeof(struct super_blk));
 	root_dir = malloc(sizeof(struct dir) * FS_FILE_MAX_COUNT);
-	//root_dir = (struct dir*) malloc(BLOCK_SIZE);
 	if (super_blk == NULL || root_dir == NULL) {
 		fprintf(stderr, "[mnt] malloc error\n");
 		return RET_FAILURE;
@@ -90,7 +141,9 @@ int fs_mount(const char *diskname)
 	}
 
 	/* load root dir */
+	int i;
 	block_read(super_blk->root_dir_idx, root_dir); // this bit was corrupting the heap
+	free_entries = get_rdir_free_num();
 
 	/* load the FAT */
 	int block_idx = 0;
@@ -101,7 +154,7 @@ int fs_mount(const char *diskname)
 		fprintf(stderr, "[mnt] malloc error\n");
 		return RET_FAILURE;
 	}
-	for (int i = FAT_START; i <= super_blk->fat_blocks; i++) {
+	for (i = FAT_START; i <= super_blk->fat_blocks; i++) {
 		block_read(i, data_blk);
 		memcpy(fat + block_idx, data_blk, BLOCK_SIZE);
 		block_idx += BLOCK_SIZE;
@@ -140,25 +193,6 @@ int fs_umount(void)
 	return RET_SUCCESS;
 }
 
-int get_rdir_free_num(void)
-{	
-	int res = 0;
-	for (int i = 0; i < FS_FILE_MAX_COUNT; i++)
-		if (root_dir[i].file_name[0] == '\0')
-			res++;
-
-	return res;
-}
-
-int get_fat_free_num(void)
-{
-	int res = 0;
-	for (int i = 0; i < super_blk->total_data_blocks; i++)
-		if (fat + i == 0)
-			res++;
-	return res;
-}
-
 int fs_info(void)
 {	
 	if (mounted == 0 || block_disk_count() == -1) // we should have a disk before printing info
@@ -170,15 +204,58 @@ int fs_info(void)
 	printf("rdir_blk=%d\n", super_blk->root_dir_idx);
 	printf("data_blk=%d\n", super_blk->data_block_idx);
 	printf("data_blk_count=%d\n", super_blk->total_data_blocks);
-	printf("fat_free_ratio=%d/%d\n", super_blk->total_data_blocks - get_fat_free_num(), super_blk->total_data_blocks);
-	printf("rdir_free_ratio=%d/%d\n", get_rdir_free_num(), RDIR_ENTRIES);
+	printf("fat_free_ratio=%d/%d\n", get_fat_free_num(), super_blk->total_data_blocks);
+	printf("rdir_free_ratio=%d/%d\n", free_entries, FS_FILE_MAX_COUNT);
 
 	return RET_SUCCESS;
 }
 
 int fs_create(const char *filename)
 {
-	/* TODO: Phase 2 */
+	/* variable declarations */
+	int i = 0;
+	int j = 0;
+	int loe = -1; /* lowest open entry */
+	int size = 0;
+	int unique = 1;
+
+	/* error catching */
+	if (mounted == 0) {
+		fprintf(stderr, "[crt] Error: no FS mounted.\n");
+		return RET_FAILURE;
+	}
+	if (free_entries <= 0) {
+		fprintf(stderr, "[crt] Error: root dir full.\n");
+		return RET_FAILURE;
+	}
+	if (filename == NULL) {
+		fprintf(stderr, "[crt] Error: null filename\n");
+		return RET_FAILURE;
+	}
+        while(filename[size++] != '\0' && size < FS_FILENAME_LEN);
+	if (size > FS_FILENAME_LEN) {
+		fprintf(stderr, "[crt] Error: filename '%s' length invalid.\n", filename);
+		return RET_FAILURE;
+	}
+	if (filename[size-1] != '\0') {
+		fprintf(stderr, "[crt] Error: filename '%s' not null-terminated. Last char: %c\n", filename, filename[size-1]);
+		return RET_FAILURE;
+	}
+	while((unique = strcmp(root_dir[j++].file_name, filename)) && j < FS_FILE_MAX_COUNT);
+	if (!unique) {
+		fprintf(stderr, "[crt] Error: duplicate filename '%s'.\n", filename);
+		return RET_FAILURE;
+	}
+
+	/* find loe */
+	while (root_dir[loe=i++].file_name[0] != '\0');
+	/* create file */
+	memcpy(root_dir[loe].file_name, filename, size);
+	root_dir[loe].file_size = 0;
+	root_dir[loe].data_block_idx = FAT_EOC;
+	free_entries--;
+
+	return RET_SUCCESS;
 }
 
 int fs_delete(const char *filename)
@@ -224,12 +301,35 @@ int fs_read(int fd, void *buf, size_t count)
 // DEBUG
 int main(int argc, char *argv[])
 {
-	int m, i, u;
+	int retval_print = 0;
+	unsigned int dcode = 0b00000000;
+	int m, i, u, f1, f2;
+	for(i = 0; i < argc; i++) {
+		if(!strcmp(argv[i], "-pf"))
+			dcode = dcode | 0b00000001;
+		if(!strcmp(argv[i], "-pd"))
+			dcode = dcode | 0b00000010;
+		if(!strcmp(argv[i], "-rv"))
+			dcode = dcode | 0b00000100;
+	}
+	/* begin debugging track */
 	m = fs_mount("./disk.fs");
 	i = fs_info();
-	//fprintf(stdout, "Retvals: m=%d, i=%d\n", m, i);
+	f1 = fs_create("file1");
+	f2 = fs_create("file2");
+	/* end debugging track */
+
+	if(dcode & 0b00000001)
+		print_fat();
+	if(dcode & 0b00000010)
+		print_dir();
+	if(dcode & 0b00000100)
+		retval_print = 1;
+	/* unmount FS */
 	u = fs_umount();
-	fprintf(stdout, "Retvals: m=%d, i=%d, u=%d\n", m, i, u);
+	
+	if(retval_print)
+		fprintf(stdout, "Retvals: m=%d, i=%d, u=%d, f1=%d, f2=%d\n", m, i, u, f1, f2);
 	
 	return EXIT_SUCCESS;
 }
