@@ -51,7 +51,8 @@ struct __attribute__((__packed__)) dir
 struct __attribute__((__packed__)) fd 
 {
 	dir_t file;
-	int num;
+	uint8_t fd_val;
+	uint8_t offset;
 };
 
 sb_t super_blk;
@@ -59,6 +60,7 @@ fat_t fat;
 dir_t root_dir;
 
 fd_t fd_table[FS_OPEN_MAX_COUNT];
+uint8_t fd_keys[FS_OPEN_MAX_COUNT];
 
 int mounted = 0;
 int open_files = 0;
@@ -90,8 +92,8 @@ int get_fat_free_num(void)
 void print_fat(void)
 {
         int i;
-        for(i = 0; i < super_blk->fat_blocks*BLOCK_SIZE; i++)
-                if(fat[i] != 0)
+        for (i = 0; i < super_blk->fat_blocks*BLOCK_SIZE; i++)
+                if (fat[i] != 0)
                         fprintf(stdout, "FAT entry %d: %d\n", i, fat[i]);
 }
 
@@ -102,14 +104,44 @@ void print_dir(void)
         char *fn = "Filename";
         char *fs = "Filesize";
         char *bi = "Block Index";
-        for(i = 0; i < FS_FILE_MAX_COUNT; i++) {
-                if(root_dir[i].file_name[0] != '\0') {
+        for (i = 0; i < FS_FILE_MAX_COUNT; i++) {
+                if (root_dir[i].file_name[0] != '\0') {
                         char *efn = root_dir[i].file_name;
                         int efs = root_dir[i].file_size;
                         int idx = root_dir[i].data_block_idx;
                         fprintf(stdout, "Root entry %d:\n\t%s:%s\n\t%s:%d\n\t%s:%d\n", i, fn, efn, fs, efs, bi, idx);
                 }
         }
+}
+
+/* Validate the given string filename
+ * returns RET_FAILURE == -1 on failure
+ * returns length of filename on success
+ * string func is an error-printing parameter
+ * */
+int validate_filename(const char *filename, const char *func)
+{
+	int size = 0;
+
+	if (mounted == 0) {
+                fprintf(stderr, "[%s] Error: no FS mounted.\n", func);
+                return RET_FAILURE;
+        }
+        if (filename == NULL) {
+                fprintf(stderr, "[%s] Error: null filename\n", func);
+                return RET_FAILURE;
+        }
+        while (filename[size++] != '\0' && size < FS_FILENAME_LEN);
+        if (size > FS_FILENAME_LEN) {
+                fprintf(stderr, "[%s] Error: filename '%s' length invalid.\n", func, filename);
+                return RET_FAILURE;
+        }
+        if (filename[size-1] != '\0') {
+                fprintf(stderr, "[%s] Error: filename '%s' not null-terminated. Last char: %c\n", func, filename, filename[size-1]);
+                return RET_FAILURE;
+        }
+
+	return size;
 }
 
 int fs_mount(const char *diskname)
@@ -170,6 +202,10 @@ int fs_mount(const char *diskname)
 		memcpy(fat + block_idx, data_blk, BLOCK_SIZE);
 		block_idx += BLOCK_SIZE;
 	}
+	
+	/* initialize fd_keys*/
+	for (i = 0; i < FS_OPEN_MAX_COUNT; i++)
+		fd_keys[i] = 0;
 
 	mounted = 1;
 	return RET_SUCCESS;
@@ -231,28 +267,13 @@ int fs_create(const char *filename)
 	int unique = 1;
 
 	/* error catching */
-	if (mounted == 0) {
-		fprintf(stderr, "[crt] Error: no FS mounted.\n");
+	if ((size = validate_filename(filename, "crt")) == RET_FAILURE)
 		return RET_FAILURE;
-	}
 	if (free_entries <= 0) {
 		fprintf(stderr, "[crt] Error: root dir full.\n");
 		return RET_FAILURE;
 	}
-	if (filename == NULL) {
-		fprintf(stderr, "[crt] Error: null filename\n");
-		return RET_FAILURE;
-	}
-        while(filename[size++] != '\0' && size < FS_FILENAME_LEN);
-	if (size > FS_FILENAME_LEN) {
-		fprintf(stderr, "[crt] Error: filename '%s' length invalid.\n", filename);
-		return RET_FAILURE;
-	}
-	if (filename[size-1] != '\0') {
-		fprintf(stderr, "[crt] Error: filename '%s' not null-terminated. Last char: %c\n", filename, filename[size-1]);
-		return RET_FAILURE;
-	}
-	while((unique = strcmp(root_dir[j++].file_name, filename)) && j < FS_FILE_MAX_COUNT);
+	while ((unique = strcmp(root_dir[j++].file_name, filename)) && j < FS_FILE_MAX_COUNT);
 	if (!unique) {
 		fprintf(stderr, "[crt] Error: duplicate filename '%s'.\n", filename);
 		return RET_FAILURE;
@@ -269,41 +290,21 @@ int fs_create(const char *filename)
 	return RET_SUCCESS;
 }
 
-/* There is a lot of repeated code here so
- * in the future I will split it up
- * */
 int fs_delete(const char *filename)
 {
 	/* variable declarations */
         int i = 0;
 	int j = 0;
         int idx = -1; /* location of target */
-        int size = 0;
         int unique = 1;
 
         /* error catching */
-        if (mounted == 0) {
-                fprintf(stderr, "[crt] Error: no FS mounted.\n");
+        if (validate_filename(filename, "del") == RET_FAILURE)
                 return RET_FAILURE;
-        }
-        if (filename == NULL) {
-                fprintf(stderr, "[crt] Error: null filename\n");
-                return RET_FAILURE;
-        }
-        while(filename[size++] != '\0' && size < FS_FILENAME_LEN);
-        if (size > FS_FILENAME_LEN) {
-                fprintf(stderr, "[crt] Error: filename '%s' length invalid.\n", filename);
-                return RET_FAILURE;
-        }
-        if (filename[size-1] != '\0') {
-                fprintf(stderr, "[crt] Error: filename '%s' not null-terminated. Last char: %c\n", filename, filename[size-1]);
-                return RET_FAILURE;
-        }
-
 	/* verify file exists and get idx */
-        while((unique = strcmp(root_dir[idx=j++].file_name, filename)) && j < FS_FILE_MAX_COUNT);
+        while ((unique = strcmp(root_dir[idx=j++].file_name, filename)) && j < FS_FILE_MAX_COUNT);
         if (unique) {
-                fprintf(stderr, "[crt] Error: no such filename '%s'.\n", filename);
+                fprintf(stderr, "[del] Error: no such filename '%s'.\n", filename);
                 return RET_FAILURE;
         }
 
@@ -323,9 +324,10 @@ int fs_delete(const char *filename)
 
 int fs_ls(void)
 {
+	int i;
 	fprintf(stdout, "FS Ls:\n");
-	for(i = 0; i < FS_FILE_MAX_COUNT; i++) {
-		if(root_dir[i].file_name[0] != '\0') {
+	for (i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (root_dir[i].file_name[0] != '\0') {
 			char *efn = root_dir[i].file_name;
 			int efs = root_dir[i].file_size;
 			int idx = root_dir[i].data_block_idx;
@@ -336,72 +338,119 @@ int fs_ls(void)
 
 int fs_open(const char *filename)
 {	
-	/* check if filename is valid */
-	if (strnlen(filename, FS_FILENAME_LEN) >= FS_FILENAME_LEN) {
-		fprintf(stderr, 'invalid filename'); //bruh
-		return RET_FA;
-	}
+	/* variable declarations */
+	int fd_idx = -1;
+	int file_idx = 0;
+	int j = 0;
+	int unique = 0;
 
+	/* check if filename is valid */
+	if (validate_filename(filename, "open") == RET_FAILURE)
+		return RET_FAILURE;
 	/* check if too many files */
 	if (open_files >= FS_OPEN_MAX_COUNT) {
-		fprintf(stderr, 'too many open files'); //bRuh
+		fprintf(stderr, "[open] Error: too many open files.\n");
 		return RET_FAILURE;
 	}
-
-	int fd_idx;
-	int file_idx;
-	bool found = false;
-
+	/* check if file exists */
+	while ((unique = strcmp(root_dir[j++].file_name, filename)) && j < FS_FILE_MAX_COUNT);
+        if (unique) {
+                fprintf(stderr, "[open] Error: no such filename '%s'.\n", filename);
+                return RET_FAILURE;
+        }
 	/* find file to open */
         for (file_idx = 0; file_idx < FS_FILE_MAX_COUNT; file_idx++) {
-		if (root_dir[file_idx].file_name[0] != '\0' && strcmp(root_dir[i].file_name, filename) == 0) {
+		if (root_dir[file_idx].file_name[0] != '\0' && strcmp(root_dir[file_idx].file_name, filename) == 0) {
 			/* open file */
-			fd_t open_file = (fd_t) malloc(sizeof(struct fd));
-			open_file->file = root_dir[file_idx];
-			open_file->num = 0;
+			fd_t open_file = malloc(sizeof(struct fd));
+			open_file->file = &root_dir[file_idx];
+			open_file->offset = 0;
 			open_files++;
 
 			/* add file to fd_table */
-			for(fd_idx = 0; i < FS_OPEN_MAX_COUNT; fd_idx++) {
-				if(fd_table[fd_idx] == NULL) {
+			for (fd_idx = 0; fd_idx < FS_OPEN_MAX_COUNT; fd_idx++) {
+				if (fd_keys[fd_idx] == 0) {
+					fd_keys[fd_idx] = 1;
 					fd_table[fd_idx] = open_file;
-					found = true;
-					return fd_idx;
+					open_file->fd_val = fd_idx;
+					break;
 				} 
 			}
 			break;
 		}
 	}
-	
-	if (!found)
-		return RET_FAILURE;
+	return fd_idx;
 }
 
 int fs_close(int fd)
 {
+	/* check for mounted FS */
+	if (mounted == 0) {
+		fprintf(stderr, "[close] Error: no FS mounted.\n");
+		return RET_FAILURE;
+	}
 	/* Check for a valid fd */
-	if (fd > FS_OPEN_MAX_COUNT || fd < 0)
+	if (fd > FS_OPEN_MAX_COUNT || fd < 0) {
+		fprintf(stderr, "[close] Error: fd out-of-bounds.\n");
 		return RET_FAILURE;
-
+	}
 	/* check if file exists */
-	if (fd_table[fd] == NULL)
+	if (fd_keys[fd] == 0) {
+		fprintf(stderr, "[close] Error: fd DNE.\n");
 		return RET_FAILURE;
-
+	}
+	
+	fd_keys[fd] = 0;
 	free(fd_table[fd]);
-        fd_table[fd] = NULL;
-        num_open--;
+        open_files--;
 
 	return RET_SUCCESS;
 }
 
 int fs_stat(int fd)
 {
-	/* TODO: Phase 3 */
+	/* error catching */
+	if (mounted == 0) {
+                fprintf(stderr, "[stat] Error: no FS mounted.\n");
+                return RET_FAILURE;
+        }
+        /* check fd exists and in bounds */
+        if (fd > FS_OPEN_MAX_COUNT || fd < 0) {
+                fprintf(stderr, "[stat] Error: fd out-of-bounds.\n");
+                return RET_FAILURE;
+        }
+        if (fd_keys[fd] == 0) {
+                fprintf(stderr, "[stat] Error: fd DNE.\n");
+                return RET_FAILURE;
+        }
+	
+	return fd_table[fd]->file->file_size;
 }
 
 int fs_lseek(int fd, size_t offset)
 {
-	/* TODO: Phase 3 */
+	/* error catching */
+	if (mounted == 0) {
+                fprintf(stderr, "[seek] Error: no FS mounted.\n");
+                return RET_FAILURE;
+        }
+        /* check fd exists and in bounds */
+	if (fd > FS_OPEN_MAX_COUNT || fd < 0) {
+                fprintf(stderr, "[seek] Error: fd out-of-bounds.\n");
+                return RET_FAILURE;
+        }
+        if (fd_keys[fd] == 0) {
+                fprintf(stderr, "[seek] Error: fd DNE.\n");
+                return RET_FAILURE;
+        }
+	if (fd_table[fd]->file->file_size < offset) {
+		fprintf(stderr, "[seek] Error: offset out-of-bounds.\n");
+		return RET_FAILURE;
+	}
+	
+	fd_table[fd]->offset = offset;
+
+	return RET_SUCCESS;
 }
 
 int fs_write(int fd, void *buf, size_t count)
