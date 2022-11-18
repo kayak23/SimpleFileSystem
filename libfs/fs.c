@@ -258,9 +258,56 @@ int fs_create(const char *filename)
 	return RET_SUCCESS;
 }
 
+/* There is a lot of repeated code here so
+ * in the future I will split it up
+ * */
 int fs_delete(const char *filename)
 {
-	/* TODO: Phase 2 */
+	/* variable declarations */
+        int i = 0;
+	int j = 0;
+        int idx = -1; /* location of target */
+        int size = 0;
+        int unique = 1;
+
+        /* error catching */
+        if (mounted == 0) {
+                fprintf(stderr, "[crt] Error: no FS mounted.\n");
+                return RET_FAILURE;
+        }
+        if (filename == NULL) {
+                fprintf(stderr, "[crt] Error: null filename\n");
+                return RET_FAILURE;
+        }
+        while(filename[size++] != '\0' && size < FS_FILENAME_LEN);
+        if (size > FS_FILENAME_LEN) {
+                fprintf(stderr, "[crt] Error: filename '%s' length invalid.\n", filename);
+                return RET_FAILURE;
+        }
+        if (filename[size-1] != '\0') {
+                fprintf(stderr, "[crt] Error: filename '%s' not null-terminated. Last char: %c\n", filename, filename[size-1]);
+                return RET_FAILURE;
+        }
+
+	/* verify file exists and get idx */
+        while((unique = strcmp(root_dir[idx=j++].file_name, filename)) && j < FS_FILE_MAX_COUNT);
+        if (unique) {
+                fprintf(stderr, "[crt] Error: no such filename '%s'.\n", filename);
+                return RET_FAILURE;
+        }
+
+        /* delete file */
+        memcpy(root_dir[idx].file_name, "", 1);
+        root_dir[idx].file_size = 0;
+        i = root_dir[idx].data_block_idx;
+	while (i != FAT_EOC) {
+		j = fat[i];
+		fat[i] = 0;
+		i = j;
+	}
+        free_entries++;
+
+        return RET_SUCCESS;
 }
 
 int fs_ls(void)
@@ -317,6 +364,7 @@ int main(int argc, char *argv[])
 	i = fs_info();
 	f1 = fs_create("file1");
 	f2 = fs_create("file2");
+	fs_delete("file1");
 	/* end debugging track */
 
 	if(dcode & 0b00000001)
