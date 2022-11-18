@@ -27,6 +27,7 @@
 typedef struct super_blk*	sb_t;
 typedef uint16_t*		fat_t;
 typedef struct dir*	 	dir_t;
+typedef struct fd*		fd_t;
 
 struct __attribute__((__packed__)) super_blk 
 {
@@ -47,9 +48,17 @@ struct __attribute__((__packed__)) dir
 	uint8_t		padding[10];
 };
 
+struct __attribute__((__packed__)) fd 
+{
+	dir_t file;
+	int num;
+};
+
 sb_t super_blk;
 fat_t fat;
 dir_t root_dir;
+
+fd_t fd_table[FS_OPEN_MAX_COUNT];
 
 int mounted = 0;
 int open_files = 0;
@@ -77,7 +86,8 @@ int get_fat_free_num(void)
         return res;
 }
 
-void print_fat(void) // DEBUG only func
+/*  DEBUG only func */
+void print_fat(void)
 {
         int i;
         for(i = 0; i < super_blk->fat_blocks*BLOCK_SIZE; i++)
@@ -85,7 +95,8 @@ void print_fat(void) // DEBUG only func
                         fprintf(stdout, "FAT entry %d: %d\n", i, fat[i]);
 }
 
-void print_dir(void) // DEBUG only func
+/*  DEBUG only func */
+void print_dir(void)
 {
         int i;
         char *fn = "Filename";
@@ -116,7 +127,7 @@ int fs_mount(const char *diskname)
 	if (block_disk_open(diskname)) {
 		fprintf(stderr, "[mnt] invalid diskname\n");
 		return RET_FAILURE;
-	} // all following failure catches should close the disk
+	} /* all following failure catches should close the disk */
 
 	/* load the superblock */
 	super_blk = malloc(sizeof(struct super_blk));
@@ -141,11 +152,11 @@ int fs_mount(const char *diskname)
 	}
 
 	/* load root dir */
-	int i;
 	block_read(super_blk->root_dir_idx, root_dir); // this bit was corrupting the heap
 	free_entries = get_rdir_free_num();
 
 	/* load the FAT */
+	int i;
 	int block_idx = 0;
 	fat = malloc(sizeof(uint16_t) * super_blk->fat_blocks * BLOCK_SIZE);
 	//uint16_t *data_blk = malloc(sizeof(uint16_t) * BLOCK_SIZE); //this was twice as large as it should have been
@@ -265,17 +276,75 @@ int fs_delete(const char *filename)
 
 int fs_ls(void)
 {
-	/* TODO: Phase 2 */
+	fprintf(stdout, "FS Ls:\n");
+	for(i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if(root_dir[i].file_name[0] != '\0') {
+			char *efn = root_dir[i].file_name;
+			int efs = root_dir[i].file_size;
+			int idx = root_dir[i].data_block_idx;
+			fprintf(stdout, "file: %s, size: %d, data_blk: %d\n", efn, efs, idx);
+		}
+	}
 }
 
 int fs_open(const char *filename)
-{
-	/* TODO: Phase 3 */
+{	
+	/* check if filename is valid */
+	if (strnlen(filename, FS_FILENAME_LEN) >= FS_FILENAME_LEN) {
+		fprintf(stderr, 'invalid filename');
+		return RET_FA;
+	}
+
+	/* check if too many files */
+	if (open_files >= FS_OPEN_MAX_COUNT) {
+		fprintf(stderr, 'too many open files');
+		return RET_FAILURE;
+	}
+
+	int fd_idx;
+	int file_idx;
+	bool found = false;
+
+	/* find file to open */
+        for (file_idx = 0; file_idx < FS_FILE_MAX_COUNT; file_idx++) {
+		if (root_dir[file_idx].file_name[0] != '\0' && strcmp(root_dir[i].file_name, filename) == 0) {
+			/* open file */
+			fd_t open_file = (fd_t) malloc(sizeof(struct fd));
+			open_file->file = root_dir[file_idx];
+			open_file->num = 0;
+			open_files++;
+
+			/* add file to fd_table */
+			for(fd_idx = 0; i < FS_OPEN_MAX_COUNT; fd_idx++) {
+				if(fd_table[fd_idx] == NULL) {
+					fd_table[fd_idx] = open_file;
+					found = true;
+					return fd_idx;
+				} 
+			}
+			break;
+		}
+	}
+	
+	if (!found)
+		return RET_FAILURE;
 }
 
 int fs_close(int fd)
 {
-	/* TODO: Phase 3 */
+	/* Check for a valid fd */
+	if (fd > FS_OPEN_MAX_COUNT || fd < 0)
+		return RET_FAILURE;
+
+	/* check if file exists */
+	if (fd_table[fd] == NULL)
+		return RET_FAILURE;
+
+	free(fd_table[fd]);
+        fd_table[fd] = NULL;
+        num_open--;
+
+	return RET_SUCCESS;
 }
 
 int fs_stat(int fd)
