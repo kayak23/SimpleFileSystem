@@ -338,13 +338,13 @@ int fs_open(const char *filename)
 {	
 	/* check if filename is valid */
 	if (strnlen(filename, FS_FILENAME_LEN) >= FS_FILENAME_LEN) {
-		fprintf(stderr, 'invalid filename');
+		fprintf(stderr, 'invalid filename'); //bruh
 		return RET_FA;
 	}
 
 	/* check if too many files */
 	if (open_files >= FS_OPEN_MAX_COUNT) {
-		fprintf(stderr, 'too many open files');
+		fprintf(stderr, 'too many open files'); //bRuh
 		return RET_FAILURE;
 	}
 
