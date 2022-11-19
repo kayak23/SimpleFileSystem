@@ -181,7 +181,7 @@ int validate_descriptor(const int fd, const char *func)
 int get_free_fat_idx(void)
 {
 	int idx = -1;
-	while (fat[++idx] != 0 && idx < fat_size);
+	while (fat[++idx] != 0 && idx < super_blk->total_data_blocks);
 	if (fat[idx] != 0)
 		return RET_FAILURE;
 	fat[idx] = FAT_EOC;
@@ -247,7 +247,7 @@ int fs_mount(const char *diskname)
 		memcpy(fat + block_idx, data_blk, BLOCK_SIZE);
 		block_idx += BLOCK_SIZE;
 	}
-	
+
 	/* initialize fd_keys*/
 	for (i = 0; i < FS_OPEN_MAX_COUNT; i++)
 		fd_keys[i] = 0;
@@ -270,8 +270,13 @@ int fs_umount(void)
 	
 	block_write(super_blk->root_dir_idx, root_dir);
 	block_write(0, super_blk);
-	block_write(1, fat);
-	block_write(2, fat + BLOCK_SIZE);
+	
+	int i;
+	int offset = 0;
+	for (i = FAT_START; i <= super_blk->fat_blocks; i++) {
+		block_write(i, fat + offset*BLOCK_SIZE);
+		offset++;
+	}
 
 	if (block_disk_close() == RET_FAILURE)
 		return RET_FAILURE;
@@ -354,14 +359,17 @@ int fs_delete(const char *filename)
         }
 
         /* delete file */
-        memcpy(root_dir[idx].file_name, "", 1);
-        root_dir[idx].file_size = 0;
+	//uint8_t empty[FS_FILENAME_LEN];
+	//for (i = 0; i < FS_FILENAME_LEN; i++) empty[i] = '\0';
+        memcpy(root_dir[idx].file_name, /*empty*/"", /*FS_FILENAME_LEN*/1);
+        //root_dir[idx].file_size = 0;
         i = root_dir[idx].data_block_idx;
 	while (i != FAT_EOC) {
 		j = fat[i];
 		fat[i] = 0;
 		i = j;
 	}
+	root_dir[idx].data_block_idx = 0;
         free_entries++;
 
         return RET_SUCCESS;
@@ -485,8 +493,9 @@ int fs_write(int fd, void *buf, size_t count)
 	dir_t file = fd_table[fd]->file;
 	int num_blocks_reqd = (int)count / BLOCK_SIZE + 1;
 	int offset = fd_table[fd]->offset;
+	int blk_offset = super_blk->data_block_idx;
 	int size_written = 0; /* num bytes written */
-	int target_block = -1; /* block to which we write*/
+	int target_block = -1; /* first data block to which we write*/
 	int nav = 0; /* num jumps to make while navigating fat */
 
 	/* get a fat entry if we don't have one */
@@ -502,7 +511,7 @@ int fs_write(int fd, void *buf, size_t count)
 	target_block = file->data_block_idx;
 	while (nav-- > 0)
 		target_block = fat[target_block];
-	target_block += super_blk->data_block_idx - 1;
+	//target_block += blk_offset;
 
 	/* okay, so now we're writing to block "target_block"... 
 	 * but how much space will this take? and do we have enough? */
@@ -512,10 +521,10 @@ int fs_write(int fd, void *buf, size_t count)
 	for (i = 0; i < num_blocks_reqd+1; i++) block_idx[i] = -1;
 	for (i = 0; i < num_blocks_reqd; i++) {
 		blocks[i] = malloc(sizeof(struct block));
-		int retval = block_read(target_block, (void*)blocks[i]);
+		int retval = block_read(target_block+blk_offset, (void*)blocks[i]);
 		if (retval == -1)
 			fprintf(stderr, "[write] Error: block read failed. Index:%d\n", target_block);
-		block_idx[i] = target_block;
+		block_idx[i] = target_block+blk_offset;
 		/* file needs more space? */
 		if (fat[target_block] == FAT_EOC && num_blocks_reqd > 1 && i < num_blocks_reqd-1) {
 			int new = get_free_fat_idx();
@@ -536,10 +545,10 @@ int fs_write(int fd, void *buf, size_t count)
 		off_r = offset;
 	i = 0;
 	while (block_idx[i] != -1) {
-		fprintf(stdout, "off_r: %d, size_written: %d\n", off_r, size_written);
+		//fprintf(stdout, "off_r: %d, size_written: %d\n", off_r, size_written);
 		while (off_r != BLOCK_SIZE && size_written < (int)count) {
 			blocks[i]->bytes[off_r++] = ((struct block*)buf)->bytes[size_written++];
-			fprintf(stdout, "Wrote a byte from %d in buf to %d in block[%d]\n", size_written-1, off_r-1, i);
+			//fprintf(stdout, "Wrote a byte from %d in buf to %d in block[%d]\n", size_written-1, off_r-1, block_idx[i]);
 		}
 		int retval = block_write(block_idx[i], (void*)blocks[i]);
 		if (retval == -1)
@@ -556,7 +565,7 @@ int fs_write(int fd, void *buf, size_t count)
 	int new = count + offset - file->file_size;
 	if (new > 0)
 		file->file_size = file->file_size + new;
-
+	
 	return size_written;
 }
 
