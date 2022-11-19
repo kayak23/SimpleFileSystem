@@ -490,8 +490,12 @@ int fs_write(int fd, void *buf, size_t count)
 	int nav = 0; /* num jumps to make while navigating fat */
 
 	/* get a fat entry if we don't have one */
-	if (file->data_block_idx == FAT_EOC)
-		file->data_block_idx = get_free_fat_idx();
+	if (file->data_block_idx == FAT_EOC) {
+		int retval = get_free_fat_idx();
+		if (retval == RET_FAILURE)
+			return size_written;
+		file->data_block_idx = retval;
+	}
 
 	/* set the target block - offset MUST be valid at this point */
 	nav = offset / BLOCK_SIZE;
