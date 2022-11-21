@@ -621,7 +621,7 @@ int fs_read(int fd, void *buf, size_t count)
 			bbuf_offset += count;
 			break;
 		}
-		/* if we are reading from start of blk */
+		/* if we are not reading from start of blk */
 		else if (blk_read_offset > 0) {
 			memcpy(buf + bbuf_offset, bbuf + blk_read_offset, BLOCK_SIZE - blk_read_offset);
 			bbuf_offset += BLOCK_SIZE - blk_read_offset;
