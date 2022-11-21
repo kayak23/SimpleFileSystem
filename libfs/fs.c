@@ -571,11 +571,72 @@ int fs_write(int fd, void *buf, size_t count)
 
 int fs_read(int fd, void *buf, size_t count)
 {
-	/* TODO: Phase 4 */
-	(void)fd;
-	(void)buf;
-	(void)count;
-	return -1;
+	/* error catching */
+	if (validate_descriptor(fd, "read") == RET_FAILURE)
+		return RET_FAILURE;
+	if (buf == NULL) {
+		fprintf(stderr, "[read] Error: null buffer.\n");
+		return RET_FAILURE;
+	}
+
+	/* variable initialization */
+	dir_t file = fd_table[fd]->file;
+	int offset = fd_table[fd]->offset;
+	int blk_offset = super_blk->data_block_idx;
+	int target_block = -1;		/* first data block to read*/
+	int nav = 0;		/* num jumps to make while navigating fat */
+	int bbuf_offset = 0;
+				
+	if (file == NULL) {
+		fprintf(stderr, "[read] Error: null file.\n");
+		return RET_FAILURE;
+	}
+
+	fprintf(stderr, "[DEBUG] reading across multiple blocks\n");
+
+	int blk_read_offset;
+	void *bbuf = (void*) malloc(BLOCK_SIZE);
+
+	while(count > 0) {
+		/* check if we reach EOF */
+		if(offset >= (int) file->file_size)
+			break;
+
+		/* determine which block to start reading from */
+		nav = offset / BLOCK_SIZE;
+		target_block = file->data_block_idx;
+		while (nav-- > 0)
+			target_block = fat[target_block];
+
+		fprintf(stderr, "[DEBUG] read block %d, bytes remaning %ld\n", target_block, count);
+
+		/* read bytes into circular buffer */
+		block_read(target_block + blk_offset, bbuf);
+		blk_read_offset = offset % BLOCK_SIZE;
+
+		/* determine if we actually need a circular buffer at this point */
+		if(count + blk_read_offset < BLOCK_SIZE) { 
+			memcpy(buf + bbuf_offset, bbuf + blk_read_offset, count);
+			offset += count;
+			bbuf_offset += count;
+			break;
+		}
+		/* if we are reading from start of blk */
+		else if (blk_read_offset > 0) {
+			memcpy(buf + bbuf_offset, bbuf + blk_read_offset, BLOCK_SIZE - blk_read_offset);
+			bbuf_offset += BLOCK_SIZE - blk_read_offset;
+			offset += BLOCK_SIZE - blk_read_offset;
+			count -= BLOCK_SIZE - blk_read_offset;
+		} else {
+			/* copy entire blk into bbuf */
+			memcpy(buf + bbuf_offset, bbuf, BLOCK_SIZE);
+			bbuf_offset += BLOCK_SIZE;
+			offset += BLOCK_SIZE;
+			count -= BLOCK_SIZE;
+		}
+	}
+	free(bbuf);
+	return bbuf_offset;
 }
 
 // DEBUG
