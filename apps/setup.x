@@ -2,8 +2,8 @@
 make
 rm disk.fs
 rm disk_control.fs
-./fs_make.x disk.fs 4096
-./fs_make.x disk_control.fs 4096
+./fs_make.x disk.fs 10
+./fs_make.x disk_control.fs 10
 ./test_fs.x add disk.fs file1.txt
 ./fs_ref.x add disk_control.fs file1.txt
 ./test_fs.x add disk.fs file2.txt

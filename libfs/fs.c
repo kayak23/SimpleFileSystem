@@ -97,9 +97,8 @@ int get_fat_free_num(void)
 void print_fat(void)
 {
         int i;
-        for (i = 0; i < super_blk->fat_blocks*BLOCK_SIZE; i++)
-                if (fat[i] != 0)
-                        fprintf(stdout, "FAT entry %d: %d\n", i, fat[i]);
+        for (i = 0; i <= super_blk->total_data_blocks; i++)
+                fprintf(stdout, "FAT entry %d: %d\n", i, fat[i]);
 }
 
 /*  DEBUG only func */
@@ -180,8 +179,8 @@ int validate_descriptor(const int fd, const char *func)
  * */
 int get_free_fat_idx(void)
 {
-	int idx = -1;
-	while (fat[++idx] != 0 && idx < super_blk->total_data_blocks);
+	int idx = 1;
+	while (fat[idx] != 0 && idx < super_blk->total_data_blocks-1) idx++;
 	if (fat[idx] != 0)
 		return RET_FAILURE;
 	fat[idx] = FAT_EOC;
@@ -522,8 +521,9 @@ int fs_write(int fd, void *buf, size_t count)
 	for (i = 0; i < num_blocks_reqd; i++) {
 		blocks[i] = malloc(sizeof(struct block));
 		int retval = block_read(target_block+blk_offset, (void*)blocks[i]);
-		if (retval == -1)
-			fprintf(stderr, "[write] Error: block read failed. Index:%d\n", target_block);
+		if (retval == -1) {
+			fprintf(stderr, "[write] Error: block read failed. Index:%d\n", target_block+blk_offset);
+		}
 		block_idx[i] = target_block+blk_offset;
 		/* file needs more space? */
 		if (fat[target_block] == FAT_EOC && num_blocks_reqd > 1 && i < num_blocks_reqd-1) {
@@ -562,10 +562,11 @@ int fs_write(int fd, void *buf, size_t count)
 	free(blocks);
 
 	/* update the file size */
-	int new = count + offset - file->file_size;
+	int new = size_written + offset - file->file_size;
 	if (new > 0)
 		file->file_size = file->file_size + new;
-	
+
+	//print_fat();	
 	return size_written;
 }
 
