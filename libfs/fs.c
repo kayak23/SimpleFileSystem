@@ -548,6 +548,7 @@ int fs_write(int fd, void *buf, size_t count)
 		//fprintf(stdout, "off_r: %d, size_written: %d\n", off_r, size_written);
 		while (off_r != BLOCK_SIZE && size_written < (int)count) {
 			blocks[i]->bytes[off_r++] = ((struct block*)buf)->bytes[size_written++];
+			//offset++;
 			//fprintf(stdout, "Wrote a byte from %d in buf to %d in block[%d]\n", size_written-1, off_r-1, block_idx[i]);
 		}
 		int retval = block_write(block_idx[i], (void*)blocks[i]);
@@ -565,6 +566,7 @@ int fs_write(int fd, void *buf, size_t count)
 	int new = size_written + offset - file->file_size;
 	if (new > 0)
 		file->file_size = file->file_size + new;
+	//fd_table[fd]->offset = offset;
 
 	//print_fat();	
 	return size_written;
@@ -636,6 +638,7 @@ int fs_read(int fd, void *buf, size_t count)
 			count -= BLOCK_SIZE;
 		}
 	}
+	//fd_table[fd]->offset = offset;
 	free(bbuf);
 	return bbuf_offset;
 }
