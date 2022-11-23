@@ -577,6 +577,8 @@ int fs_read(int fd, void *buf, size_t count)
 	/* error catching */
 	if (validate_descriptor(fd, "read") == RET_FAILURE)
 		return RET_FAILURE;
+	if ((int)count < 0)
+		return RET_FAILURE;
 	if (buf == NULL) {
 		fprintf(stderr, "[read] Error: null buffer.\n");
 		return RET_FAILURE;
@@ -594,6 +596,9 @@ int fs_read(int fd, void *buf, size_t count)
 		fprintf(stderr, "[read] Error: null file.\n");
 		return RET_FAILURE;
 	}
+
+	if (file->file_size - offset < count)
+		count = file->file_size - offset;
 
 	fprintf(stderr, "[DEBUG] reading across multiple blocks\n");
 
