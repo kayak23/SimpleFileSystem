@@ -62,7 +62,6 @@ void test_four_desc()
 	fs_write(fd4, (void*)"4444", 4);
 	fs_lseek(fd1, 0);
 	fs_read(fd1, (void*)buf, len);
-	fprintf(stderr, "4DESC: Got '%s' when expected '%s'.\n", (char*)buf, (char*)data3);
 	TEST_ASSERT(!strncmp("4444------------", (char*)buf, len));
 	printf("*** TEST MULTI CPRWRITE ***%n", &format);
 	fs_lseek(fd1, 0);
@@ -94,7 +93,6 @@ void test_append(int fd)
 	int bytes = fs_write(fd, (void*)new, len);
 	fs_lseek(fd, 0);
 	fs_read(fd, (void*)buf, new_len);
-	fprintf(stderr, "APPEND: Got '%s' when expected '%s'.\nBytes written: %d\n", (char*)buf, (char*)data2, bytes);
 	TEST_ASSERT(!strncmp((char*)data2, (char*)buf, new_len) && bytes == len);
 	free(buf);
 }

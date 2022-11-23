@@ -93,57 +93,24 @@ int get_fat_free_num(void)
         return res;
 }
 
-/*  DEBUG only func */
-void print_fat(void)
-{
-        int i;
-        for (i = 0; i <= super_blk->total_data_blocks; i++)
-                fprintf(stdout, "FAT entry %d: %d\n", i, fat[i]);
-}
-
-/*  DEBUG only func */
-void print_dir(void)
-{
-        int i;
-        char *fn = "Filename";
-        char *fs = "Filesize";
-        char *bi = "Block Index";
-        for (i = 0; i < FS_FILE_MAX_COUNT; i++) {
-                if (root_dir[i].file_name[0] != '\0') {
-                        char *efn = (char*)root_dir[i].file_name;
-                        int efs = root_dir[i].file_size;
-                        int idx = root_dir[i].data_block_idx;
-                        fprintf(stdout, "Root entry %d:\n\t%s:%s\n\t%s:%d\n\t%s:%d\n", i, fn, efn, fs, efs, bi, idx);
-                }
-        }
-}
-
 /* Validate the given string filename
  * returns RET_FAILURE on failure
  * returns length of filename on success
  * string func is an error-printing parameter
  * */
-int validate_filename(const char *filename, const char *func)
+int validate_filename(const char *filename)
 {
 	int size = 0;
 
-	if (mounted == 0) {
-                fprintf(stderr, "[%s] Error: no FS mounted.\n", func);
+	if (mounted == 0)
                 return RET_FAILURE;
-        }
-        if (filename == NULL) {
-                fprintf(stderr, "[%s] Error: null filename\n", func);
+        if (filename == NULL)
                 return RET_FAILURE;
-        }
         while (filename[size++] != '\0' && size < FS_FILENAME_LEN);
-        if (size > FS_FILENAME_LEN) {
-                fprintf(stderr, "[%s] Error: filename '%s' length invalid.\n", func, filename);
+        if (size > FS_FILENAME_LEN)
                 return RET_FAILURE;
-        }
-        if (filename[size-1] != '\0') {
-                fprintf(stderr, "[%s] Error: filename '%s' not null-terminated. Last char: %c\n", func, filename, filename[size-1]);
+        if (filename[size-1] != '\0')
                 return RET_FAILURE;
-        }
 
 	return size;
 }
@@ -152,23 +119,17 @@ int validate_filename(const char *filename, const char *func)
  * returns RET_FAILURE on failure
  * returns RET_SUCCESS on success 
  * */
-int validate_descriptor(const int fd, const char *func)
+int validate_descriptor(const int fd)
 {
 	/* check for mounted FS */
-        if (mounted == 0) {
-                fprintf(stderr, "[%s] Error: no FS mounted.\n", func);
+        if (mounted == 0)
                 return RET_FAILURE;
-        }
         /* Check for a valid fd */
-        if (fd > FS_OPEN_MAX_COUNT || fd < 0) {
-                fprintf(stderr, "[%s] Error: fd out-of-bounds.\n", func);
+        if (fd > FS_OPEN_MAX_COUNT || fd < 0)
                 return RET_FAILURE;
-        }
         /* check if file exists */
-        if (fd_keys[fd] == 0) {
-                fprintf(stderr, "[%s] Error: fd DNE.\n", func);
+        if (fd_keys[fd] == 0)
                 return RET_FAILURE;
-        }
 
 	return RET_SUCCESS;
 }
@@ -195,36 +156,27 @@ int fs_mount(const char *diskname)
 	 * */
 
 	/* check whether diskname is valid fs */
-	if (diskname == NULL ) {
-		fprintf(stderr, "[mnt] null diskname\n");
+	if (diskname == NULL )
 		return RET_FAILURE;
-	}
-	if (block_disk_open(diskname)) {
-		fprintf(stderr, "[mnt] invalid diskname\n");
+	if (block_disk_open(diskname))
 		return RET_FAILURE;
-	} /* all following failure catches should close the disk */
+	/* all following failure catches should close the disk */
 
 	/* load the superblock */
 	super_blk = malloc(sizeof(struct super_blk));
 	root_dir = malloc(sizeof(struct dir) * FS_FILE_MAX_COUNT);
-	if (super_blk == NULL || root_dir == NULL) {
-		fprintf(stderr, "[mnt] malloc error\n");
+	if (super_blk == NULL || root_dir == NULL)
 		return RET_FAILURE;
-	}
 
 	/* validate super block */
 	char buf[9];
 	block_read(SPBLK_IDX, super_blk);
 	memcpy(buf, super_blk->signature, SIGLEN);
 	buf[8] = '\0';
-	if (strcmp(buf, VALID_SIG)) {
-		fprintf(stderr, "[mnt] invalid signature: %s\n", buf);
+	if (strcmp(buf, VALID_SIG))
 		return RET_FAILURE;
-	}
-	if (super_blk->total_blocks != block_disk_count()) {
-		fprintf(stderr, "[mnt] invalid block count\n");
+	if (super_blk->total_blocks != block_disk_count())
 		return RET_FAILURE;
-	}
 
 	/* load root dir */
 	block_read(super_blk->root_dir_idx, root_dir); // this bit was corrupting the heap
@@ -235,12 +187,9 @@ int fs_mount(const char *diskname)
 	int block_idx = 0;
 	fat_size = super_blk->fat_blocks * BLOCK_SIZE;
 	fat = malloc(sizeof(uint16_t) * fat_size);
-	//uint16_t *data_blk = malloc(sizeof(uint16_t) * BLOCK_SIZE); //this was twice as large as it should have been
 	uint16_t data_blk[BLOCK_SIZE/2];
-	if (fat == NULL /*|| data_blk == NULL*/) {
-		fprintf(stderr, "[mnt] malloc error\n");
+	if (fat == NULL)
 		return RET_FAILURE;
-	}
 	for (i = FAT_START; i <= super_blk->fat_blocks; i++) {
 		block_read(i, data_blk);
 		memcpy(fat + block_idx, data_blk, BLOCK_SIZE);
@@ -316,17 +265,13 @@ int fs_create(const char *filename)
 	int unique = 1;
 
 	/* error catching */
-	if ((size = validate_filename(filename, "crt")) == RET_FAILURE)
+	if ((size = validate_filename(filename)) == RET_FAILURE)
 		return RET_FAILURE;
-	if (free_entries <= 0) {
-		fprintf(stderr, "[crt] Error: root dir full.\n");
+	if (free_entries <= 0)
 		return RET_FAILURE;
-	}
 	while ((unique = strcmp((char*)root_dir[j++].file_name, filename)) && j < FS_FILE_MAX_COUNT);
-	if (!unique) {
-		fprintf(stderr, "[crt] Error: duplicate filename '%s'.\n", filename);
+	if (!unique)
 		return RET_FAILURE;
-	}
 
 	/* find loe */
 	while (root_dir[loe=i++].file_name[0] != '\0');
@@ -348,14 +293,12 @@ int fs_delete(const char *filename)
         int unique = 1;
 
         /* error catching */
-        if (validate_filename(filename, "del") == RET_FAILURE)
+        if (validate_filename(filename) == RET_FAILURE)
                 return RET_FAILURE;
 	/* verify file exists and get idx */
         while ((unique = strcmp((char*)root_dir[idx=j++].file_name, filename)) && j < FS_FILE_MAX_COUNT);
-        if (unique) {
-                fprintf(stderr, "[del] Error: no such filename '%s'.\n", filename);
+        if (unique)
                 return RET_FAILURE;
-        }
 	/* check if file is open elsewhere */
 	for (i = 0; i < FS_OPEN_MAX_COUNT; i++) {
 		if (fd_keys[i] == 1)
@@ -378,10 +321,8 @@ int fs_delete(const char *filename)
 
 int fs_ls(void)
 {
-	if (mounted == 0) {
-		fprintf(stderr, "[ls] Error: no FS mounted.\n");
+	if (mounted == 0)
 		return RET_FAILURE;
-	}
 
 	int i;
 	fprintf(stdout, "FS Ls:\n");
@@ -406,19 +347,15 @@ int fs_open(const char *filename)
 	int unique = 0;
 
 	/* check if filename is valid */
-	if (validate_filename(filename, "open") == RET_FAILURE)
+	if (validate_filename(filename) == RET_FAILURE)
 		return RET_FAILURE;
 	/* check if too many files */
-	if (open_files >= FS_OPEN_MAX_COUNT) {
-		fprintf(stderr, "[open] Error: too many open files.\n");
+	if (open_files >= FS_OPEN_MAX_COUNT)
 		return RET_FAILURE;
-	}
 	/* check if file exists */
 	while ((unique = strcmp((char*)root_dir[j++].file_name, filename)) && j < FS_FILE_MAX_COUNT);
-        if (unique) {
-                fprintf(stderr, "[open] Error: no such filename '%s'.\n", filename);
+        if (unique)
                 return RET_FAILURE;
-        }
 	/* find file to open */
         for (file_idx = 0; file_idx < FS_FILE_MAX_COUNT; file_idx++) {
 		if (root_dir[file_idx].file_name[0] != '\0' && strcmp((char*)root_dir[file_idx].file_name, filename) == 0) {
@@ -444,7 +381,7 @@ int fs_open(const char *filename)
 
 int fs_close(int fd)
 {
-	if (validate_descriptor(fd, "close") == RET_FAILURE)
+	if (validate_descriptor(fd) == RET_FAILURE)
 		return RET_FAILURE;
 
 	fd_keys[fd] = 0;
@@ -456,7 +393,7 @@ int fs_close(int fd)
 
 int fs_stat(int fd)
 {
-	if (validate_descriptor(fd, "stat") == RET_FAILURE)
+	if (validate_descriptor(fd) == RET_FAILURE)
 		return RET_FAILURE;
 
 	return fd_table[fd]->file->file_size;
@@ -464,12 +401,10 @@ int fs_stat(int fd)
 
 int fs_lseek(int fd, size_t offset)
 {
-	if (validate_descriptor(fd, "seek") == RET_FAILURE)
+	if (validate_descriptor(fd) == RET_FAILURE)
 		return RET_FAILURE;
-	if (fd_table[fd]->file->file_size < offset) {
-		fprintf(stderr, "[seek] Error: offset out-of-bounds.\n");
+	if (fd_table[fd]->file->file_size < offset)
 		return RET_FAILURE;
-	}
 	
 	fd_table[fd]->offset = offset;
 
@@ -483,12 +418,10 @@ int fs_lseek(int fd, size_t offset)
 int fs_write(int fd, void *buf, size_t count)
 {
 	/* error catching */
-	if (validate_descriptor(fd, "write") == RET_FAILURE)
+	if (validate_descriptor(fd) == RET_FAILURE)
 		return RET_FAILURE;
-	if (buf == NULL) {
-		fprintf(stderr, "[write] Error: null buffer.\n");
+	if (buf == NULL)
 		return RET_FAILURE;
-	}
 	
 	/* variable initialization */
 	dir_t file = fd_table[fd]->file;
@@ -523,10 +456,7 @@ int fs_write(int fd, void *buf, size_t count)
 	for (i = 0; i < num_blocks_reqd+1; i++) block_idx[i] = -1;
 	for (i = 0; i < num_blocks_reqd; i++) {
 		blocks[i] = malloc(sizeof(struct block));
-		int retval = block_read(target_block+blk_offset, (void*)blocks[i]);
-		if (retval == -1) {
-			fprintf(stderr, "[write] Error: block read failed. Index:%d\n", target_block+blk_offset);
-		}
+		block_read(target_block+blk_offset, (void*)blocks[i]);
 		block_idx[i] = target_block+blk_offset;
 		/* file needs more space? */
 		if (fat[target_block] == FAT_EOC && num_blocks_reqd > 1 && i < num_blocks_reqd-1) {
@@ -552,9 +482,7 @@ int fs_write(int fd, void *buf, size_t count)
 			blocks[i]->bytes[off_r++] = ((struct block*)buf)->bytes[size_written++];
 			offset++;
 		}
-		int retval = block_write(block_idx[i], (void*)blocks[i]);
-		if (retval == -1)
-			fprintf(stderr, "[write] Error: block write failed. Index:%d\n", block_idx[i]);
+		block_write(block_idx[i], (void*)blocks[i]);
 		off_r = 0;
 		i++;
 	}
@@ -575,14 +503,12 @@ int fs_write(int fd, void *buf, size_t count)
 int fs_read(int fd, void *buf, size_t count)
 {
 	/* error catching */
-	if (validate_descriptor(fd, "read") == RET_FAILURE)
+	if (validate_descriptor(fd) == RET_FAILURE)
 		return RET_FAILURE;
 	if ((int)count < 0)
 		return RET_FAILURE;
-	if (buf == NULL) {
-		fprintf(stderr, "[read] Error: null buffer.\n");
+	if (buf == NULL)
 		return RET_FAILURE;
-	}
 
 	/* variable initialization */
 	dir_t file = fd_table[fd]->file;
@@ -592,15 +518,11 @@ int fs_read(int fd, void *buf, size_t count)
 	int nav = 0;		/* num jumps to make while navigating fat */
 	int bbuf_offset = 0;
 				
-	if (file == NULL) {
-		fprintf(stderr, "[read] Error: null file.\n");
+	if (file == NULL)
 		return RET_FAILURE;
-	}
 
 	if (file->file_size - offset < count)
 		count = file->file_size - offset;
-
-	//fprintf(stderr, "[DEBUG] reading across multiple blocks\n");
 
 	int blk_read_offset;
 	void *bbuf = (void*) malloc(BLOCK_SIZE);
@@ -615,8 +537,6 @@ int fs_read(int fd, void *buf, size_t count)
 		target_block = file->data_block_idx;
 		while (nav-- > 0)
 			target_block = fat[target_block];
-
-		//fprintf(stderr, "[DEBUG] read block %d, bytes remaning %ld\n", target_block, count);
 
 		/* read bytes into circular buffer */
 		block_read(target_block + blk_offset, bbuf);
@@ -646,41 +566,4 @@ int fs_read(int fd, void *buf, size_t count)
 	fd_table[fd]->offset = offset;
 	free(bbuf);
 	return bbuf_offset;
-}
-
-// DEBUG
-int mai(int argc, char *argv[])
-{
-	int retval_print = 0;
-	unsigned int dcode = 0b00000000;
-	int m, i, u, f1, f2;
-	for(i = 0; i < argc; i++) {
-		if(!strcmp(argv[i], "-pf"))
-			dcode = dcode | 0b00000001;
-		if(!strcmp(argv[i], "-pd"))
-			dcode = dcode | 0b00000010;
-		if(!strcmp(argv[i], "-rv"))
-			dcode = dcode | 0b00000100;
-	}
-	/* begin debugging track */
-	m = fs_mount("./disk.fs");
-	i = fs_info();
-	f1 = fs_create("file1");
-	f2 = fs_create("file2");
-	fs_delete("file1");
-	/* end debugging track */
-
-	if(dcode & 0b00000001)
-		print_fat();
-	if(dcode & 0b00000010)
-		print_dir();
-	if(dcode & 0b00000100)
-		retval_print = 1;
-	/* unmount FS */
-	u = fs_umount();
-	
-	if(retval_print)
-		fprintf(stdout, "Retvals: m=%d, i=%d, u=%d, f1=%d, f2=%d\n", m, i, u, f1, f2);
-	
-	return EXIT_SUCCESS;
 }
