@@ -51,7 +51,7 @@ struct __attribute__((__packed__)) dir
 struct __attribute__((__packed__)) fd 
 {
 	dir_t file;
-	uint8_t offset;
+	size_t offset;
 };
 
 struct __attribute__((__packed__)) block
@@ -356,12 +356,14 @@ int fs_delete(const char *filename)
                 fprintf(stderr, "[del] Error: no such filename '%s'.\n", filename);
                 return RET_FAILURE;
         }
-
+	/* check if file is open elsewhere */
+	for (i = 0; i < FS_OPEN_MAX_COUNT; i++) {
+		if (fd_keys[i] == 1)
+			if (!strcmp((char*)fd_table[i]->file->file_name, filename))
+				return RET_FAILURE;
+	}
         /* delete file */
-	//uint8_t empty[FS_FILENAME_LEN];
-	//for (i = 0; i < FS_FILENAME_LEN; i++) empty[i] = '\0';
-        memcpy(root_dir[idx].file_name, /*empty*/"", /*FS_FILENAME_LEN*/1);
-        //root_dir[idx].file_size = 0;
+        memcpy(root_dir[idx].file_name, "", 1);
         i = root_dir[idx].data_block_idx;
 	while (i != FAT_EOC) {
 		j = fat[i];
@@ -490,8 +492,9 @@ int fs_write(int fd, void *buf, size_t count)
 	
 	/* variable initialization */
 	dir_t file = fd_table[fd]->file;
-	int num_blocks_reqd = (int)count / BLOCK_SIZE + 1;
-	int offset = fd_table[fd]->offset;
+	size_t offset = fd_table[fd]->offset;
+	size_t num_blocks_reqd = (count+offset) / BLOCK_SIZE + 1; //change for read as well
+	size_t old_offset = offset;
 	int blk_offset = super_blk->data_block_idx;
 	int size_written = 0; /* num bytes written */
 	int target_block = -1; /* first data block to which we write*/
@@ -514,7 +517,7 @@ int fs_write(int fd, void *buf, size_t count)
 
 	/* okay, so now we're writing to block "target_block"... 
 	 * but how much space will this take? and do we have enough? */
-	int i;
+	size_t i;
 	int *block_idx = malloc(sizeof(int)*(num_blocks_reqd+1));
 	struct block **blocks = malloc(sizeof(struct block*)*num_blocks_reqd);
 	for (i = 0; i < num_blocks_reqd+1; i++) block_idx[i] = -1;
@@ -545,11 +548,9 @@ int fs_write(int fd, void *buf, size_t count)
 		off_r = offset;
 	i = 0;
 	while (block_idx[i] != -1) {
-		//fprintf(stdout, "off_r: %d, size_written: %d\n", off_r, size_written);
 		while (off_r != BLOCK_SIZE && size_written < (int)count) {
 			blocks[i]->bytes[off_r++] = ((struct block*)buf)->bytes[size_written++];
-			//offset++;
-			//fprintf(stdout, "Wrote a byte from %d in buf to %d in block[%d]\n", size_written-1, off_r-1, block_idx[i]);
+			offset++;
 		}
 		int retval = block_write(block_idx[i], (void*)blocks[i]);
 		if (retval == -1)
@@ -563,12 +564,11 @@ int fs_write(int fd, void *buf, size_t count)
 	free(blocks);
 
 	/* update the file size */
-	int new = size_written + offset - file->file_size;
+	int new = size_written + old_offset - file->file_size;
 	if (new > 0)
 		file->file_size = file->file_size + new;
-	//fd_table[fd]->offset = offset;
+	fd_table[fd]->offset = offset;
 
-	//print_fat();	
 	return size_written;
 }
 
@@ -600,7 +600,7 @@ int fs_read(int fd, void *buf, size_t count)
 	if (file->file_size - offset < count)
 		count = file->file_size - offset;
 
-	fprintf(stderr, "[DEBUG] reading across multiple blocks\n");
+	//fprintf(stderr, "[DEBUG] reading across multiple blocks\n");
 
 	int blk_read_offset;
 	void *bbuf = (void*) malloc(BLOCK_SIZE);
@@ -616,7 +616,7 @@ int fs_read(int fd, void *buf, size_t count)
 		while (nav-- > 0)
 			target_block = fat[target_block];
 
-		fprintf(stderr, "[DEBUG] read block %d, bytes remaning %ld\n", target_block, count);
+		//fprintf(stderr, "[DEBUG] read block %d, bytes remaning %ld\n", target_block, count);
 
 		/* read bytes into circular buffer */
 		block_read(target_block + blk_offset, bbuf);
@@ -643,7 +643,7 @@ int fs_read(int fd, void *buf, size_t count)
 			count -= BLOCK_SIZE;
 		}
 	}
-	//fd_table[fd]->offset = offset;
+	fd_table[fd]->offset = offset;
 	free(bbuf);
 	return bbuf_offset;
 }

@@ -41,7 +41,7 @@ static int test_hello_world()
 	/* Open file */
 	fd = fs_open("file1.txt");
 	ASSERT(fd >= 0, "fs_open");
-
+	
 	/* Read some data */
 	ret = fs_read(fd, data, 13);
 	ASSERT(ret == 13, "fs_read");
