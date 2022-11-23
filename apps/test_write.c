@@ -121,8 +121,10 @@ void test_write_error(int fd)
 
 int main(int argc, char *argv[])
 {
-	if (argc < 2)
+	if (argc < 2) {
+		fprintf(stderr, "Usage: ./test_write.x <disk>\n");
 		return RET_FAILURE;
+	}
 	
 	char *diskname = argv[1];
 	if (fs_mount(diskname))
