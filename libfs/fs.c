@@ -422,7 +422,9 @@ int fs_write(int fd, void *buf, size_t count)
 		return RET_FAILURE;
 	if (buf == NULL)
 		return RET_FAILURE;
-	
+	if (count == 0)
+		return 0;
+
 	/* variable initialization */
 	dir_t file = fd_table[fd]->file;
 	size_t offset = fd_table[fd]->offset;
