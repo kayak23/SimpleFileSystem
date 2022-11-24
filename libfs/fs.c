@@ -148,13 +148,17 @@ int get_free_fat_idx(void)
 	return idx;
 }
 
+void cleanup(sb_t spblk, dir_t root)
+{
+	if (spblk != NULL)
+		free(spblk);
+	if (root != NULL)
+		free(root);
+	block_disk_close();
+}
+
 int fs_mount(const char *diskname)
 {
-	/* In the future, let's break this function
-	 * into three sections in which we initialize
-	 * all of our globals individually
-	 * */
-
 	/* check whether diskname is valid fs */
 	if (diskname == NULL )
 		return RET_FAILURE;
@@ -165,21 +169,27 @@ int fs_mount(const char *diskname)
 	/* load the superblock */
 	super_blk = malloc(sizeof(struct super_blk));
 	root_dir = malloc(sizeof(struct dir) * FS_FILE_MAX_COUNT);
-	if (super_blk == NULL || root_dir == NULL)
+	if (super_blk == NULL || root_dir == NULL) {
+		cleanup(super_blk, root_dir);
 		return RET_FAILURE;
+	}
 
 	/* validate super block */
 	char buf[9];
 	block_read(SPBLK_IDX, super_blk);
 	memcpy(buf, super_blk->signature, SIGLEN);
 	buf[8] = '\0';
-	if (strcmp(buf, VALID_SIG))
+	if (strcmp(buf, VALID_SIG)) {
+		cleanup(super_blk, root_dir);
 		return RET_FAILURE;
-	if (super_blk->total_blocks != block_disk_count())
+	}
+	if (super_blk->total_blocks != block_disk_count()) {
+		cleanup(super_blk, root_dir);
 		return RET_FAILURE;
+	}
 
 	/* load root dir */
-	block_read(super_blk->root_dir_idx, root_dir); // this bit was corrupting the heap
+	block_read(super_blk->root_dir_idx, root_dir);
 	free_entries = get_rdir_free_num();
 
 	/* load the FAT */
@@ -188,8 +198,10 @@ int fs_mount(const char *diskname)
 	fat_size = super_blk->fat_blocks * BLOCK_SIZE;
 	fat = malloc(sizeof(uint16_t) * fat_size);
 	uint16_t data_blk[BLOCK_SIZE/2];
-	if (fat == NULL)
+	if (fat == NULL) {
+		cleanup(super_blk, root_dir);
 		return RET_FAILURE;
+	}
 	for (i = FAT_START; i <= super_blk->fat_blocks; i++) {
 		block_read(i, data_blk);
 		memcpy(fat + block_idx, data_blk, BLOCK_SIZE);
@@ -240,7 +252,7 @@ int fs_umount(void)
 
 int fs_info(void)
 {	
-	if (mounted == 0 || block_disk_count() == -1) // we should have a disk before printing info
+	if (mounted == 0 || block_disk_count() == -1)
 		return RET_FAILURE;
 
 	printf("FS Info:\n");
@@ -411,10 +423,6 @@ int fs_lseek(int fd, size_t offset)
 	return RET_SUCCESS;
 }
 
-/* two cases:
- * 1) File already has a fat entry
- * 2) File does not have a fat entry
- * */
 int fs_write(int fd, void *buf, size_t count)
 {
 	/* error catching */
@@ -428,7 +436,7 @@ int fs_write(int fd, void *buf, size_t count)
 	/* variable initialization */
 	dir_t file = fd_table[fd]->file;
 	size_t offset = fd_table[fd]->offset;
-	size_t num_blocks_reqd = (count+offset) / BLOCK_SIZE + 1; //change for read as well
+	size_t num_blocks_reqd = (count+offset) / BLOCK_SIZE + 1;
 	size_t old_offset = offset;
 	int blk_offset = super_blk->data_block_idx;
 	int size_written = 0; /* num bytes written */
@@ -448,7 +456,6 @@ int fs_write(int fd, void *buf, size_t count)
 	target_block = file->data_block_idx;
 	while (nav-- > 0)
 		target_block = fat[target_block];
-	//target_block += blk_offset;
 
 	/* okay, so now we're writing to block "target_block"... 
 	 * but how much space will this take? and do we have enough? */
